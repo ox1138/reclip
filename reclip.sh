@@ -40,6 +40,10 @@ else
     source venv/bin/activate
 fi
 
+# YouTube changes often; stale yt-dlp versions start failing with HTTP 403.
+echo "Checking for yt-dlp updates..."
+pip install -q -U "yt-dlp[default]" || echo "  (yt-dlp update failed, continuing with installed version)"
+
 PORT="${PORT:-8899}"
 export PORT
 
