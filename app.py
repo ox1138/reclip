@@ -13,11 +13,40 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 jobs = {}
 
 
+def ensure_h264(path):
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", path],
+        capture_output=True, text=True, timeout=30,
+    )
+    if probe.returncode != 0 or probe.stdout.strip() == "h264":
+        return path
+
+    tmp = path + ".h264.mp4"
+    try:
+        recode = subprocess.run(
+            ["ffmpeg", "-y", "-i", path, "-c:v", "libx264", "-preset", "veryfast",
+             "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", tmp],
+            capture_output=True, text=True, timeout=600,
+        )
+    except subprocess.TimeoutExpired:
+        # Keep the original download rather than failing the whole job.
+        recode = None
+    if recode and recode.returncode == 0:
+        os.replace(tmp, path)
+    else:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    return path
+
+
 def run_download(job_id, url, format_choice, format_id):
     job = jobs[job_id]
     out_template = os.path.join(DOWNLOAD_DIR, f"{job_id}.%(ext)s")
 
-    cmd = ["yt-dlp", "--no-playlist", "-o", out_template]
+    cmd = ["yt-dlp", "--no-playlist", "--remote-components", "ejs:github", "-o", out_template]
 
     if format_choice == "audio":
         cmd += ["-x", "--audio-format", "mp3"]
@@ -55,6 +84,10 @@ def run_download(job_id, url, format_choice, format_id):
                 except OSError:
                     pass
 
+        # QuickTime can't decode VP9; re-encode to H.264 if needed.
+        if format_choice != "audio":
+            chosen = ensure_h264(chosen)
+
         job["status"] = "done"
         job["file"] = chosen
         ext = os.path.splitext(chosen)[1]
@@ -85,7 +118,7 @@ def get_info():
     if not url:
         return jsonify({"error": "No URL provided"}), 400
 
-    cmd = ["yt-dlp", "--no-playlist", "-j", url]
+    cmd = ["yt-dlp", "--no-playlist", "--remote-components", "ejs:github", "-j", url]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
